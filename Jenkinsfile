@@ -4,20 +4,20 @@ pipeline {
         timeout(time: 1, unit: 'HOURS')
     }
     environment{
-    SERVICE = "reachx-galaxy-preprod"
-    BASE_PATH = "/home/devops/procx_root/workspace/Reachx_galaxy_preproduction"
+    SERVICE = "reachx-galaxy-dev"
+    BASE_PATH = "/home/devops/procx_root/workspace/Reachx_galaxy_development"
     ENV_PATH ="kv/projects/reachx/galaxy"
     SERVICE_ENV=".env"
     DOCKER_TAG = "${env.BUILD_ID}"
     HELM_DIR = "reachx-galaxy-chart"
-    HELM_BRANCH="reachx-galaxy-preprod"
+    HELM_BRANCH="reachx-galaxy-dev"
     IMAGE_TAG = "${BUILD_NUMBER}"+"-"+"${LATEST_COMMIT_SHORT}"
     LATEST_COMMIT_FULL = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
     LATEST_COMMIT_SHORT = LATEST_COMMIT_FULL.take(7)
     }
     parameters {
         string(name: 'SCM_URL', defaultValue: 'https://github.com/DriveX-Mobility-Private-Limited/galaxy.git', description: 'SCM URL for source code')
-        choice(name: 'BRANCH', choices: 'Dev')
+        choice(name: 'BRANCH', choices: 'Team')
     }
     stages {     
         stage('Clean') {
@@ -85,58 +85,58 @@ pipeline {
         stage('Update the chart') { 
             steps {
                 withVault(configuration: [engineVersion: 1, skipSslVerification: true, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[engineVersion: 1, path: 'kv/projects/cicd-pipelines-credentials', secretValues: [[vaultKey: 'GIT_USER'], [vaultKey: 'GIT_TOKEN']]]]) {
-                    sh "cd ${BASE_PATH}/${HELM_DIR} && pwd && ls && sed -E -i \"s/appVersion: [0-9]+-$SERVICE/appVersion: $IMAGE_TAG/\" Chart.yaml && git add Chart.yaml && git status && git commit Chart.yaml -m 'Updated the Charts yaml with version $IMAGE_TAG file' && git push https://${GIT_USER}:${GIT_TOKEN}@github.com/DriveX-Mobility-Private-Limited/drivex-deployments.git"
+                    sh "cd ${BASE_PATH}/${HELM_DIR} && pwd && ls && sed -E -i 's/appVersion: .+/appVersion: $IMAGE_TAG/' Chart.yaml && git add Chart.yaml && git status && git commit Chart.yaml -m 'Updated the Charts yaml with version $IMAGE_TAG file' && git push https://${GIT_USER}:${GIT_TOKEN}@github.com/DriveX-Mobility-Private-Limited/drivex-deployments.git"
                 } 
             }   
         }
-        // stage('sync argocd app') {
-        //     steps {
-        //         withVault(configuration: [engineVersion: 1, skipSslVerification: true, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/cicd-pipelines-credentials', secretValues: [[vaultKey: 'ARGOCD_SERVER'], [vaultKey: 'ARGOCD_USERNAME'], [vaultKey: 'ARGOCD_PASSWORD']]]]) {
-        //         sh ('argocd login --grpc-web $ARGOCD_SERVER --username $ARGOCD_USERNAME --password $ARGOCD_PASSWORD')    
-        //         }
-        //         sh "argocd app sync $SERVICE"
-        //         }                  
-        // }
-        // stage('Waiting for ArgoCD App Status'){
-        //     steps {
-        //         script {
-        //         def retries = 0
-        //         def maxRetries = 10
-        //         def healthStatus = 'Progressing'
+        stage('sync argocd app') {
+            steps {
+                withVault(configuration: [engineVersion: 1, skipSslVerification: true, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/cicd-pipelines-credentials', secretValues: [[vaultKey: 'ARGOCD_SERVER'], [vaultKey: 'ARGOCD_USERNAME'], [vaultKey: 'ARGOCD_PASSWORD']]]]) {
+                sh ('argocd login --grpc-web $ARGOCD_SERVER --username $ARGOCD_USERNAME --password $ARGOCD_PASSWORD')    
+                }
+                sh "argocd app sync $SERVICE"
+                }                  
+        }
+        stage('Waiting for ArgoCD App Status'){
+            steps {
+                script {
+                def retries = 0
+                def maxRetries = 10
+                def healthStatus = 'Progressing'
 
-        //         while (healthStatus.trim() == 'Progressing' && retries < maxRetries) {
-        //             def appJson = sh(returnStdout: true, script: "argocd app get ${SERVICE} -o=json").trim()
-        //             def json = readJSON text: appJson
+                while (healthStatus.trim() == 'Progressing' && retries < maxRetries) {
+                    def appJson = sh(returnStdout: true, script: "argocd app get ${SERVICE} -o=json").trim()
+                    def json = readJSON text: appJson
 
-        //             healthStatus = json.status.health.status.trim()
+                    healthStatus = json.status.health.status.trim()
 
-        //             if (healthStatus == 'Progressing') {
-        //                 echo 'Health status is Processing. Waiting for the application to become Healthy...'
-        //                 sleep time: 5, unit: 'SECONDS'
-        //                 retries++
-        //                 }
-        //             }
+                    if (healthStatus == 'Progressing') {
+                        echo 'Health status is Processing. Waiting for the application to become Healthy...'
+                        sleep time: 5, unit: 'SECONDS'
+                        retries++
+                        }
+                    }
 
-        //         if (healthStatus == 'Healthy') {
-        //             echo 'Health status is Healthy. Continuing with the pipeline.'
-        //             } else {
-        //                 currentBuild.result = 'FAILURE'
-        //                 error "Health status is ${healthStatus}. Build failed."
-        //                 }
-        //             }
-        //         }
-        // }
+                if (healthStatus == 'Healthy') {
+                    echo 'Health status is Healthy. Continuing with the pipeline.'
+                    } else {
+                        currentBuild.result = 'FAILURE'
+                        error "Health status is ${healthStatus}. Build failed."
+                        }
+                    }
+                }
+        }
     }                      
-    // post {
-    //     success {
-    //         withVault(configuration: [engineVersion: 1, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Deployment_updates']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Failure']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_failure']]]]) {
-    //             googlechatnotification message:"$reachx_galaxy_dev_success", notifySuccess: "$Success", url: "$Deployment_updates"
-    //             }
-    //     }
-    //     failure {
-    //         withVault(configuration: [engineVersion: 1, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Deployment_updates']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Failure']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_failure']]]]) {
-    //             googlechatnotification message:"$reachx_galaxy_dev_failure", notifySuccess: "$Failure", url: "$Deployment_updates"
-    //             }
-    //     }            
-    // }                    
+    post {
+        success {
+            withVault(configuration: [engineVersion: 1, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Deployment_updates']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Failure']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_failure']]]]) {
+                googlechatnotification message:"$reachx_galaxy_dev_success", notifySuccess: "$Success", url: "$Deployment_updates"
+                }
+        }
+        failure {
+            withVault(configuration: [engineVersion: 1, timeout: 60, vaultCredentialId: 'jenkins-role', vaultUrl: 'https://vault.drivex.co.in'], vaultSecrets: [[path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Deployment_updates']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'Failure']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_success']]], [path: 'kv/projects/procx/google-notification', secretValues: [[vaultKey: 'reachx_galaxy_dev_failure']]]]) {
+                googlechatnotification message:"$reachx_galaxy_dev_failure", notifySuccess: "$Failure", url: "$Deployment_updates"
+                }
+        }            
+    }                    
 }
